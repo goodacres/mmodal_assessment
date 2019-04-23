@@ -1,0 +1,100 @@
+---
+
+#########################################################
+###                                                   ###
+###  Name: anagram_routine.yml  Author: J Goodacre    ###
+###                                                   ###
+###   Usage: ansible-playbook anagram_routine.yml     ###
+###                                                   ###
+###  An ansible playbook to Install Docker from the   ###
+###  latest repo and build an image containing a      ###
+###  Python application. A transient container is     ###
+###  then ran from the image which takes 2 variables  ###
+###  taken from prompt at runtime of the playbook.    ###
+###  The variables are then fed into the Python app   ###
+###  to display the results of execution on-screen.   ###
+###                                                   ###
+#########################################################
+
+
+# Define host to run playbook on and disable
+# gather_facts as we are running locally.
+- name: Install/Build/Run anagram application through Docker
+  hosts: 127.0.0.1
+  connection: local
+  gather_facts: False
+
+
+# Prompt for input strings for script.
+  vars_prompt:
+    - name: "str1"
+      prompt: "Please enter the first string to compare"
+      private: no
+    - name: "str2"
+      prompt: "Please enter the second string to compare"
+      private: no
+
+
+# Start tasks to complete and download latest docker-ce repo.
+  tasks:
+    - name: Download docker-ce repo for files
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+      become: yes
+
+
+# Use yum module to return list of available docker-ce repos and 
+# set output to the "status" variable for later evaluation.
+    - name: Check if docker-ce is already installed
+      yum:
+        list: docker-ce
+      register: status
+      become: yes
+
+
+# Install Docker only if there is not a presently installed version.
+    - name: Install docker-ce
+      package:
+        name: docker-ce
+        state: latest
+      when: (status.results|selectattr("yumstate", "match", "installed")|list|length == 0)
+      become: yes
+
+
+# Ensure Docker is in a started state.
+    - name: Start docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+
+# Run command to return current Docker images and assign to 
+# variable "image_present" for later evaluation.
+    - name: Check if app image already exists
+      command: docker image ls python_app
+      register: image_present
+      become: yes
+
+
+# Build the Docker image from the Dockerfile only if a
+# "python_app" image does not already exist.
+    - name: Build the application image
+      command: docker build -t python_app:1.0 .
+      when: '"python_app" not in image_present.stdout'
+      become: yes
+
+
+# Run a temporary container from the above image that will
+# be used to execute the Python application with provided
+# input parameters. Store the result in "app_result" 
+# variable to output to screen afterwards.
+    - name: Run the application as a transient container
+      command: 'docker run --rm python_app:1.0 "{{str1}}" "{{str2}}"'
+      register: app_result
+      become: yes
+
+# Output script result to screen
+    - debug: var=app_result.stdout_lines
+
